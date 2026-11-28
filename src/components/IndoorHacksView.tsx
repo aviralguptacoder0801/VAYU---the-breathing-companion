@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Check, Wind } from 'lucide-react';
 import { INDOOR_HACKS } from '../data/presets';
 import { calculateCadrRecommendation } from '../utils/airQuality';
+import { FilterGroup } from './FilterGroup';
 import type { AirQualityData, HackCategory } from '../types';
 
 interface IndoorHacksViewProps {
@@ -168,32 +169,21 @@ export function IndoorHacksView({
       </div>
 
       {/* Filter Bar & Hacks Grid */}
-      <div className="space-y-4">
+      <section aria-labelledby="indoor-protocols-heading" className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div
-            role="tablist"
-            aria-label="Filter indoor air hacks by category"
-            className="inline-flex flex-wrap items-center p-1 bg-slate-100 rounded-lg"
-          >
-            {FILTER_TABS.map((tab) => (
-              <button
-                key={tab.id}
-                type="button"
-                role="tab"
-                aria-selected={filter === tab.id}
-                onClick={() => setFilter(tab.id)}
-                className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap shrink-0 ${
-                  filter === tab.id
-                    ? 'bg-white text-slate-900 shadow-xs'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                {tab.label}
-              </button>
-            ))}
+          <div className="flex flex-wrap items-center gap-3">
+            <h2 id="indoor-protocols-heading" className="text-base font-semibold text-slate-900">
+              Evidence-Backed Home Protocols
+            </h2>
+            <FilterGroup
+              label="Filter indoor air hacks by category"
+              options={FILTER_TABS}
+              value={filter}
+              onChange={setFilter}
+            />
           </div>
 
-          <span className="text-xs text-slate-500 font-mono tabular-nums">
+          <span className="text-xs text-slate-600 font-mono tabular-nums">
             {appliedHackIds.length} of {INDOOR_HACKS.length} applied at home
           </span>
         </div>
@@ -263,7 +253,7 @@ export function IndoorHacksView({
             );
           })}
         </div>
-      </div>
+      </section>
     </div>
   );
 }

@@ -14,6 +14,12 @@ import {
 } from './data/presets';
 import { useLocalStorage } from './hooks/useLocalStorage';
 import { buildTailoredRoutine, calculateImpactSummary } from './utils/airQuality';
+import {
+  sanitizePositiveInteger,
+  sanitizeStoredProfile,
+  sanitizeStoredRoutines,
+  sanitizeStringArray,
+} from './utils/storage';
 import type {
   AiGeneratedPlan,
   AirQualityData,
@@ -37,27 +43,33 @@ export default function App() {
 
   const [profile, setProfile] = useLocalStorage<HouseholdProfile>(
     STORAGE_KEYS.profile,
-    DEFAULT_PROFILE
+    DEFAULT_PROFILE,
+    (parsed) => sanitizeStoredProfile(parsed)
   );
   const [completedRoutineIds, setCompletedRoutineIds] = useLocalStorage<string[]>(
     STORAGE_KEYS.completedRoutines,
-    ['r-night-sanctuary']
+    ['r-night-sanctuary'],
+    sanitizeStringArray
   );
   const [appliedHackIds, setAppliedHackIds] = useLocalStorage<string[]>(
     STORAGE_KEYS.appliedHacks,
-    ['hack-back-burner']
+    ['hack-back-burner'],
+    sanitizeStringArray
   );
   const [adoptedSwapIds, setAdoptedSwapIds] = useLocalStorage<string[]>(
     STORAGE_KEYS.adoptedSwaps,
-    ['swap-school-carpool']
+    ['swap-school-carpool'],
+    sanitizeStringArray
   );
   const [customRoutines, setCustomRoutines] = useLocalStorage<RoutineItem[]>(
     STORAGE_KEYS.customRoutines,
-    []
+    [],
+    (parsed) => sanitizeStoredRoutines(parsed)
   );
   const [communityHouseholds, setCommunityHouseholds] = useLocalStorage<number>(
     STORAGE_KEYS.communityHouseholds,
-    25
+    25,
+    (parsed, fallback) => sanitizePositiveInteger(parsed, fallback, 1, 300)
   );
 
   const [airQuality, setAirQuality] = useState<AirQualityData>(() => {
@@ -197,12 +209,14 @@ export default function App() {
     setProfile(updated);
     setAiRoutineOverrides(null);
     if (cityChanged) {
+      setGeneratedPlan(null);
       fetchCityAirQuality(updated.city);
     }
   };
 
   const handleSelectCity = (cityName: string) => {
     setAiRoutineOverrides(null);
+    setGeneratedPlan(null);
     fetchCityAirQuality(cityName);
   };
 
@@ -218,6 +232,13 @@ export default function App() {
 
   return (
     <div id="top" className="min-h-screen flex bg-slate-50 text-slate-900">
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-50 focus:px-4 focus:py-2 focus:text-xs focus:font-semibold focus:text-white focus:bg-teal-800 focus:rounded-lg focus:shadow-md"
+      >
+        Skip to main content
+      </a>
+
       <Sidebar
         activeTab={activeTab}
         onSelectTab={setActiveTab}
@@ -232,12 +253,17 @@ export default function App() {
         <TopBar
           activeTab={activeTab}
           city={airQuality.city}
+          mobileMenuOpen={mobileMenuOpen}
           onOpenMobileMenu={() => setMobileMenuOpen(true)}
           onOpenProfile={() => setProfileModalOpen(true)}
           onTriggerAiPlan={handleTriggerAiPlan}
         />
 
-        <main className="flex-1 w-full max-w-[1280px] mx-auto px-4 sm:px-6 lg:px-8 py-7">
+        <main
+          id="main-content"
+          tabIndex={-1}
+          className="flex-1 w-full max-w-[1280px] mx-auto px-4 sm:px-6 lg:px-8 py-7 focus:outline-none"
+        >
           {activeTab === 'routine' && (
             <RoutineView
               profile={profile}

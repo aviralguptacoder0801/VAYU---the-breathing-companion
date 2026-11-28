@@ -643,30 +643,34 @@ export function getSmogTrend(
     currentHourIndex !== undefined
       ? Math.max(0, Math.min(hourly.length - 1, currentHourIndex))
       : Math.min(hourly.length - 1, new Date().getHours());
-  const futureIdx = Math.min(hourly.length - 1, nowIdx + 3);
 
-  const currentVal = hourly[nowIdx]?.pm25 ?? hourly[0].pm25;
-  const futureVal = hourly[futureIdx]?.pm25 ?? currentVal;
-  const delta = Math.round(futureVal - currentVal);
+  const hasForwardWindow = nowIdx + 3 < hourly.length;
+  const startIdx = hasForwardWindow ? nowIdx : Math.max(0, hourly.length - 4);
+  const endIdx = hasForwardWindow ? nowIdx + 3 : hourly.length - 1;
+
+  const startVal = hourly[startIdx]?.pm25 ?? hourly[0].pm25;
+  const endVal = hourly[endIdx]?.pm25 ?? startVal;
+  const delta = Math.round(endVal - startVal);
+  const horizonLabel = hasForwardWindow ? 'over the next 3 hours' : 'into late evening';
 
   if (delta <= -12) {
     return {
       direction: 'Clearing',
       deltaPm25: delta,
-      summary: `Expected to dip by ~${Math.abs(delta)} µg/m³ over the next 3 hours.`,
+      summary: `Expected to dip by ~${Math.abs(delta)} µg/m³ ${horizonLabel}.`,
     };
   }
   if (delta >= 12) {
     return {
       direction: 'Rising',
       deltaPm25: delta,
-      summary: `Expected to climb by ~${delta} µg/m³ over the next 3 hours.`,
+      summary: `Expected to climb by ~${delta} µg/m³ ${horizonLabel}.`,
     };
   }
   return {
     direction: 'Steady',
     deltaPm25: delta,
-    summary: 'PM2.5 expected to stay near current levels over the next 3 hours.',
+    summary: `PM2.5 expected to stay near current levels ${horizonLabel}.`,
   };
 }
 

@@ -228,3 +228,28 @@ test('formatShareableFamilyBrief produces structured copyable summary', () => {
   assert.ok(brief.includes('13:00–15:00'));
 });
 
+test('edge cases: empty hourly series, negative AQI, late-night trend, and remote/induction routine branch', () => {
+  const emptyVent = findBestVentilationWindows([]);
+  assert.equal(emptyVent.bestStartHour, '13:00');
+  assert.equal(classifyAqi(-25).level, 'good');
+  assert.equal(classifyAqi(50).level, 'good');
+  assert.equal(classifyAqi(51).level, 'moderate');
+  assert.equal(classifyAqi(150).level, 'sensitive');
+  assert.equal(classifyAqi(151).level, 'unhealthy');
+
+  const lateNightTrend = getSmogTrend(sampleAir.hourly, sampleAir.hourly.length - 1);
+  assert.equal(lateNightTrend.direction, 'Rising');
+  assert.ok(lateNightTrend.summary.includes('late evening'));
+
+  const remoteProfile: HouseholdProfile = {
+    ...sampleProfile,
+    commuteMode: 'remote',
+    cookingFuel: 'induction_electric',
+    sensitivities: [],
+  };
+  const remoteRoutine = buildTailoredRoutine(remoteProfile, { ...sampleAir, usAqi: 90 });
+  assert.ok(remoteRoutine.some((r) => r.title.toLowerCase().includes('shelter')));
+  assert.ok(remoteRoutine.some((r) => r.title.toLowerCase().includes('damp-cloth')));
+});
+
+

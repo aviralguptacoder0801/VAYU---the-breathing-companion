@@ -64,3 +64,28 @@ test('createHealthJournalEntry stamps city, AQI, symptoms, and alert triage', ()
   assert.ok(entry.detectedSymptoms.includes('Sore or scratchy throat'));
   assert.ok(entry.detectedSymptoms.includes('Headache or dizziness'));
 });
+
+test('analyzeSymptomTranscript respects AQI escalation boundaries and default member label', () => {
+  const mildClean = analyzeSymptomTranscript('Dry coughing after jogging.', 80, 18);
+  assert.equal(mildClean.alertLevel, 'routine');
+
+  const mildSmog = analyzeSymptomTranscript('Dry coughing after jogging.', 110, 42);
+  assert.equal(mildSmog.alertLevel, 'elevated');
+
+  const fatigueSevere = analyzeSymptomTranscript('Feeling really exhausted today.', 180, 95);
+  assert.equal(fatigueSevere.alertLevel, 'elevated');
+
+  const entry = createHealthJournalEntry({
+    transcript: '  Need inhaler for asthma flare-up  ',
+    memberLabel: '   ',
+    inputMethod: 'text',
+    city: 'Lahore',
+    usAqi: 240.4,
+    pm25: 170.26,
+  });
+  assert.equal(entry.memberLabel, 'Self');
+  assert.equal(entry.alertLevel, 'urgent');
+  assert.equal(entry.usAqi, 240);
+  assert.equal(entry.pm25, 170.3);
+});
+

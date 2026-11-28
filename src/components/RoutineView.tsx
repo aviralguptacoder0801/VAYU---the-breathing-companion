@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import {
   Check,
   Copy,
@@ -18,6 +18,7 @@ import {
 } from '../utils/airQuality';
 import { AqiOverviewCard } from './AqiOverviewCard';
 import { ActivityGuideStrip } from './ActivityGuideStrip';
+import { FilterGroup } from './FilterGroup';
 import { HourlySmogChart } from './HourlySmogChart';
 import type {
   AirQualityData,
@@ -85,7 +86,16 @@ export function RoutineView({
   const [customPeriod, setCustomPeriod] = useState<RoutinePeriod>('morning');
   const [customImpact, setCustomImpact] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
-  const [briefCopied, setBriefCopied] = useState(false);
+  const [briefStatus, setBriefStatus] = useState<'idle' | 'copied' | 'error'>('idle');
+  const copyTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (copyTimerRef.current !== null) {
+        window.clearTimeout(copyTimerRef.current);
+      }
+    };
+  }, []);
 
   const aqiInfo = classifyAqi(airQuality.usAqi);
   const ventilation = findBestVentilationWindows(airQuality.hourly);
@@ -108,18 +118,46 @@ export function RoutineView({
     setCityInput('');
   };
 
+  const scheduleBriefReset = () => {
+    if (copyTimerRef.current !== null) {
+      window.clearTimeout(copyTimerRef.current);
+    }
+    copyTimerRef.current = window.setTimeout(() => {
+      setBriefStatus('idle');
+      copyTimerRef.current = null;
+    }, 2600);
+  };
+
   const handleCopyBrief = async () => {
     const brief = formatShareableFamilyBrief(profile, airQuality, routines, impact);
+    let copied = false;
+
     try {
       if (navigator.clipboard?.writeText) {
         await navigator.clipboard.writeText(brief);
+        copied = true;
       }
-      setBriefCopied(true);
-      setTimeout(() => setBriefCopied(false), 2600);
     } catch {
-      setBriefCopied(true);
-      setTimeout(() => setBriefCopied(false), 2600);
+      copied = false;
     }
+
+    if (!copied && typeof document !== 'undefined') {
+      try {
+        const helper = document.createElement('textarea');
+        helper.value = brief;
+        helper.setAttribute('readonly', '');
+        helper.className = 'sr-only';
+        document.body.appendChild(helper);
+        helper.select();
+        copied = document.execCommand('copy');
+        document.body.removeChild(helper);
+      } catch {
+        copied = false;
+      }
+    }
+
+    setBriefStatus(copied ? 'copied' : 'error');
+    scheduleBriefReset();
   };
 
   const handleCreateCustom = (e: React.FormEvent) => {
@@ -199,20 +237,26 @@ export function RoutineView({
           <button
             type="button"
             onClick={handleCopyBrief}
+            aria-live="polite"
             className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-slate-700 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors whitespace-nowrap shrink-0"
           >
-            {briefCopied ? (
+            {briefStatus === 'copied' ? (
               <Check className="w-3.5 h-3.5 text-teal-700" aria-hidden="true" />
             ) : (
-              <Copy className="w-3.5 h-3.5 text-slate-500" aria-hidden="true" />
+              <Copy className="w-3.5 h-3.5 text-slate-600" aria-hidden="true" />
             )}
-            {briefCopied ? 'Brief Copied' : 'Copy Family Brief'}
+            {briefStatus === 'copied'
+              ? 'Brief Copied'
+              : briefStatus === 'error'
+                ? 'Copy Unavailable'
+                : 'Copy Family Brief'}
           </button>
 
           <button
             type="button"
             onClick={onRefreshAir}
             disabled={loadingAir}
+            aria-busy={loadingAir}
             aria-label="Refresh air quality readings"
             className="p-2 text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors shrink-0 disabled:opacity-60"
           >
@@ -223,13 +267,14 @@ export function RoutineView({
 
       {/* Quick preset city switcher */}
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs border-b border-slate-200 pb-3">
-        <span className="text-slate-500 font-medium">Winter smog watch cities:</span>
+        <span className="text-slate-600 font-medium">Winter smog watch cities:</span>
         {CITY_PRESETS.map((preset) => {
           const active = preset.city.toLowerCase() === airQuality.city.toLowerCase();
           return (
             <button
               key={preset.city}
               type="button"
+              aria-pressed={active}
               onClick={() => onSelectCity(preset.city)}
               className={`transition-colors whitespace-nowrap shrink-0 ${
                 active
@@ -241,7 +286,7 @@ export function RoutineView({
             </button>
           );
         })}
-        <span className="ml-auto text-slate-400 hidden sm:inline">
+        <span className="ml-auto text-slate-600 hidden sm:inline">
           {airQuality.source === 'live'
             ? 'Live Open-Meteo telemetry'
             : 'Winter inversion baseline model'}
@@ -338,31 +383,17 @@ export function RoutineView({
             </div>
 
             <div className="flex flex-wrap items-center gap-2.5">
-              <div
-                role="tablist"
-                aria-label="Filter routine by time of day"
-                className="inline-flex items-center p-1 bg-slate-100 rounded-lg"
-              >
-                {PERIOD_FILTERS.map((tab) => (
-                  <button
-                    key={tab.id}
-                    type="button"
-                    role="tab"
-                    aria-selected={periodFilter === tab.id}
-                    onClick={() => setPeriodFilter(tab.id)}
-                    className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap shrink-0 ${
-                      periodFilter === tab.id
-                        ? 'bg-white text-slate-900 shadow-xs'
-                        : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                  >
-                    {tab.label}
-                  </button>
-                ))}
-              </div>
+              <FilterGroup
+                label="Filter routine by time of day"
+                options={PERIOD_FILTERS}
+                value={periodFilter}
+                onChange={setPeriodFilter}
+              />
 
               <button
                 type="button"
+                aria-expanded={showAddForm}
+                aria-controls="custom-routine-form"
                 onClick={() => setShowAddForm((v) => !v)}
                 className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-slate-700 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 whitespace-nowrap shrink-0"
               >
@@ -403,22 +434,30 @@ export function RoutineView({
                 {completedVisibleCount} of {routines.length} completed ({routineProgressPct}%)
               </span>
             </div>
-            <div className="h-1.5 w-full bg-slate-100 rounded-full overflow-hidden">
-              <div
-                className="h-full bg-teal-700 rounded-full transition-all duration-200"
-                style={{ width: `${routineProgressPct}%` }}
-              />
-            </div>
+            <svg
+              viewBox="0 0 100 2"
+              preserveAspectRatio="none"
+              role="progressbar"
+              aria-label="Today's routine completion"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={routineProgressPct}
+              className="w-full h-1.5 rounded-full overflow-hidden block"
+            >
+              <rect x="0" y="0" width="100" height="2" fill="#f1f5f9" />
+              <rect x="0" y="0" width={routineProgressPct} height="2" fill="#0f766e" />
+            </svg>
           </div>
         </div>
 
         {showAddForm && (
           <form
+            id="custom-routine-form"
             onSubmit={handleCreateCustom}
             className="px-6 py-4 bg-slate-50 border-b border-slate-200 space-y-3"
           >
             {formError && (
-              <p role="alert" className="text-xs font-medium text-red-700">
+              <p id="custom-routine-error" role="alert" className="text-xs font-medium text-red-700">
                 {formError}
               </p>
             )}
@@ -434,6 +473,8 @@ export function RoutineView({
                   id="custom-routine-title"
                   type="text"
                   value={customTitle}
+                  aria-invalid={Boolean(formError)}
+                  aria-describedby={formError ? 'custom-routine-error' : undefined}
                   onChange={(e) => {
                     setCustomTitle(e.target.value);
                     setFormError(null);
@@ -568,7 +609,7 @@ export function RoutineView({
                             type="button"
                             onClick={() => onDeleteCustomRoutine(item.id)}
                             aria-label={`Delete custom habit "${item.title}"`}
-                            className="p-1 text-slate-400 hover:text-red-700 hover:bg-red-50 rounded-md transition-colors shrink-0"
+                            className="p-1.5 text-slate-600 hover:text-red-700 hover:bg-red-50 rounded-md transition-colors shrink-0"
                           >
                             <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
                           </button>

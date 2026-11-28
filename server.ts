@@ -1,17 +1,39 @@
 import 'dotenv/config';
 import express from 'express';
-import type { Request, Response } from 'express';
+import type { NextFunction, Request, Response } from 'express';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { GoogleGenAI, ThinkingLevel, Type } from '@google/genai';
 import { CITY_PRESETS } from './src/data/presets.ts';
-import type { AirQualityData, HouseholdProfile } from './src/types.ts';
+import type { AirQualityData } from './src/types.ts';
+import {
+  deriveInversionRisk,
+  formatGeminiError,
+  sanitizeAiPlan,
+  validateChatPayload,
+  validateCityQuery,
+  validatePlanPayload,
+} from './src/utils/serverHelpers.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-app.use(express.json({ limit: '1mb' }));
+app.disable('x-powered-by');
+app.use((_req: Request, res: Response, next: NextFunction) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'microphone=(self)');
+  next();
+});
+app.use(express.json({ limit: '512kb' }));
+app.use((err: unknown, _req: Request, res: Response, next: NextFunction) => {
+  if (err instanceof SyntaxError && 'status' in err) {
+    res.status(400).json({ error: 'Malformed JSON request body.' });
+    return;
+  }
+  next(err);
+});
 
 function getGeminiClient(): GoogleGenAI {
   const apiKey = process.env.GEMINI_API_KEY;
@@ -30,17 +52,6 @@ function getGeminiClient(): GoogleGenAI {
   });
 }
 
-function deriveInversionRisk(
-  usAqi: number,
-  windSpeedKmh: number,
-  temperatureC: number
-): 'Low' | 'Moderate' | 'High' | 'Severe' {
-  if (usAqi >= 200 || (usAqi >= 150 && windSpeedKmh <= 6)) return 'Severe';
-  if (usAqi >= 120 || (windSpeedKmh <= 8 && temperatureC <= 10)) return 'High';
-  if (usAqi >= 75) return 'Moderate';
-  return 'Low';
-}
-
 async function fetchJsonWithTimeout(url: string, timeoutMs = 4500): Promise<unknown> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -56,11 +67,12 @@ async function fetchJsonWithTimeout(url: string, timeoutMs = 4500): Promise<unkn
 }
 
 app.get('/api/air-quality', async (req: Request, res: Response) => {
-  const cityQuery = String(req.query.city ?? 'New Delhi').trim();
-  if (!cityQuery || cityQuery.length > 80) {
-    res.status(400).json({ error: 'Please provide a valid city name (1–80 characters).' });
+  const cityValidation = validateCityQuery(req.query.city);
+  if (cityValidation.error || !cityValidation.city) {
+    res.status(400).json({ error: cityValidation.error });
     return;
   }
+  const cityQuery = cityValidation.city;
 
   const matchedPreset = CITY_PRESETS.find(
     (p) => p.city.toLowerCase() === cityQuery.toLowerCase()
@@ -186,44 +198,6 @@ app.get('/api/air-quality', async (req: Request, res: Response) => {
   }
 });
 
-function formatGeminiError(err: unknown): { status: number; message: string } {
-  const raw = err instanceof Error ? err.message : 'Unable to reach Gemini right now.';
-  if (raw.includes('GEMINI_API_KEY')) {
-    return { status: 500, message: raw };
-  }
-  if (raw.includes('PERMISSION_DENIED') || raw.includes('API_KEY_INVALID')) {
-    return {
-      status: 403,
-      message: 'Please check your Gemini API key in the Settings > Secrets panel and try again.',
-    };
-  }
-  if (raw.includes('RESOURCE_EXHAUSTED') || raw.includes('429')) {
-    return {
-      status: 429,
-      message: 'Gemini quota limit was reached temporarily. Please wait a moment and retry.',
-    };
-  }
-  if (raw.includes('503') || raw.includes('UNAVAILABLE') || raw.includes('high demand')) {
-    return {
-      status: 503,
-      message: 'Gemini is experiencing a brief demand spike. Please click Retry in a few seconds.',
-    };
-  }
-  // Extract nested JSON message if SDK wrapped an API JSON error string
-  try {
-    const start = raw.indexOf('{');
-    if (start !== -1) {
-      const parsed = JSON.parse(raw.slice(start)) as { error?: { message?: string } };
-      if (parsed?.error?.message) {
-        return { status: 502, message: parsed.error.message };
-      }
-    }
-  } catch {
-    // ignore parse failure
-  }
-  return { status: 502, message: raw };
-}
-
 async function generateWithRetry(
   ai: GoogleGenAI,
   params: {
@@ -280,23 +254,14 @@ async function generateWithRetry(
 
 app.post('/api/assistant/chat', async (req: Request, res: Response) => {
   try {
-    const body = req.body as {
-      messages?: Array<{ role: 'user' | 'assistant'; content: string }>;
-      profile?: HouseholdProfile;
-      airQuality?: AirQualityData;
-    };
-
-    const messages = body.messages ?? [];
-    const lastUserMessage = [...messages].reverse().find((m) => m.role === 'user')?.content?.trim();
-
-    if (!lastUserMessage) {
-      res.status(400).json({ error: 'Please enter a question for the Clean-Air Assistant.' });
+    const validated = validateChatPayload(req.body);
+    if (validated.error || !validated.data) {
+      res.status(400).json({ error: validated.error });
       return;
     }
 
     const ai = getGeminiClient();
-    const profile = body.profile;
-    const aq = body.airQuality;
+    const { messages, profile, airQuality: aq } = validated.data;
 
     const systemInstruction = `You are Vayu, a calm, scientifically accurate, empathetic civic clean-air assistant helping families and communities navigate severe winter smog and urban air pollution.
 
@@ -340,19 +305,14 @@ Guidelines:
 
 app.post('/api/assistant/plan', async (req: Request, res: Response) => {
   try {
-    const body = req.body as {
-      profile?: HouseholdProfile;
-      airQuality?: AirQualityData;
-      focusNote?: string;
-    };
-
-    if (!body.profile || !body.airQuality) {
-      res.status(400).json({ error: 'Household profile and air quality data are required.' });
+    const validated = validatePlanPayload(req.body);
+    if (validated.error || !validated.data) {
+      res.status(400).json({ error: validated.error });
       return;
     }
 
     const ai = getGeminiClient();
-    const { profile, airQuality, focusNote } = body;
+    const { profile, airQuality, focusNote } = validated.data;
 
     const prompt = `Generate a deeply personalized winter smog & clean-air action plan for this household:
 - Location: ${airQuality.city}, ${airQuality.country}
@@ -460,8 +420,21 @@ Produce:
       return;
     }
 
-    const parsed = JSON.parse(rawText);
-    res.json({ plan: parsed });
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(rawText);
+    } catch {
+      res.status(502).json({ error: 'Received an unreadable plan format from Gemini. Please retry.' });
+      return;
+    }
+
+    const sanitized = sanitizeAiPlan(parsed);
+    if (!sanitized) {
+      res.status(502).json({ error: 'Generated plan was incomplete. Please click Retry.' });
+      return;
+    }
+
+    res.json({ plan: sanitized });
   } catch (err) {
     const formatted = formatGeminiError(err);
     res.status(formatted.status).json({ error: formatted.message });

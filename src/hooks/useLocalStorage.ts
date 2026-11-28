@@ -2,7 +2,8 @@ import { useState, useEffect, useCallback } from 'react';
 
 export function useLocalStorage<T>(
   key: string,
-  initialValue: T | (() => T)
+  initialValue: T | (() => T),
+  sanitize?: (parsed: unknown, fallback: T) => T
 ): [T, (value: T | ((prev: T) => T)) => void] {
   const [storedValue, setStoredValue] = useState<T>(() => {
     const fallback =
@@ -11,7 +12,8 @@ export function useLocalStorage<T>(
     try {
       const raw = window.localStorage.getItem(key);
       if (raw === null) return fallback;
-      return JSON.parse(raw) as T;
+      const parsed: unknown = JSON.parse(raw);
+      return sanitize ? sanitize(parsed, fallback) : (parsed as T);
     } catch {
       return fallback;
     }

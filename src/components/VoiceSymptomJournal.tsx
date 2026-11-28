@@ -8,51 +8,24 @@ import {
   Trash2,
   MessageSquare,
 } from 'lucide-react';
+import { FilterGroup } from './FilterGroup';
 import { useLocalStorage } from '../hooks/useLocalStorage';
 import {
   analyzeSymptomTranscript,
   createHealthJournalEntry,
   validateSymptomTranscript,
 } from '../utils/symptomAlert';
+import {
+  extractSpeechChunks,
+  formatSpeechErrorNotice,
+  mergeTranscriptText,
+  type SpeechRecognitionConstructor,
+  type SpeechRecognitionErrorEventLike,
+  type SpeechRecognitionEventLike,
+  type SpeechRecognitionLike,
+} from '../utils/speechRecognition';
+import { sanitizeStoredJournalEntries } from '../utils/storage';
 import type { AirQualityData, HealthJournalEntry, SymptomAlertLevel } from '../types';
-
-interface SpeechRecognitionAlternativeLike {
-  transcript: string;
-}
-
-interface SpeechRecognitionResultLike {
-  isFinal: boolean;
-  length: number;
-  [index: number]: SpeechRecognitionAlternativeLike;
-}
-
-interface SpeechRecognitionResultListLike {
-  length: number;
-  [index: number]: SpeechRecognitionResultLike;
-}
-
-interface SpeechRecognitionEventLike {
-  resultIndex: number;
-  results: SpeechRecognitionResultListLike;
-}
-
-interface SpeechRecognitionErrorEventLike {
-  error: string;
-}
-
-interface SpeechRecognitionLike {
-  continuous: boolean;
-  interimResults: boolean;
-  lang: string;
-  onstart: (() => void) | null;
-  onend: (() => void) | null;
-  onresult: ((event: SpeechRecognitionEventLike) => void) | null;
-  onerror: ((event: SpeechRecognitionErrorEventLike) => void) | null;
-  start: () => void;
-  stop: () => void;
-}
-
-type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
 
 declare global {
   interface Window {
@@ -120,7 +93,8 @@ export function VoiceSymptomJournal({
 }: VoiceSymptomJournalProps) {
   const [entries, setEntries] = useLocalStorage<HealthJournalEntry[]>(
     STORAGE_KEY,
-    () => getDefaultSeedEntries(airQuality)
+    () => getDefaultSeedEntries(airQuality),
+    sanitizeStoredJournalEntries
   );
   const [filter, setFilter] = useState<'all' | SymptomAlertLevel>('all');
   const [memberLabel, setMemberLabel] = useState<string>('Self');
@@ -189,43 +163,17 @@ export function VoiceSymptomJournal({
       };
 
       recognition.onresult = (event: SpeechRecognitionEventLike) => {
-        let finalChunk = '';
-        let interimChunk = '';
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-          const result = event.results[i];
-          const text = result[0]?.transcript ?? '';
-          if (result.isFinal) {
-            finalChunk += text;
-          } else {
-            interimChunk += text;
-          }
+        const { finalText, interimText: nextInterim } = extractSpeechChunks(event);
+        if (finalText) {
+          setTranscript((prev) => mergeTranscriptText(prev, finalText));
         }
-        if (finalChunk.trim()) {
-          setTranscript((prev) =>
-            prev.trim() ? `${prev.trim()} ${finalChunk.trim()}` : finalChunk.trim()
-          );
-        }
-        setInterimText(interimChunk.trim());
+        setInterimText(nextInterim);
       };
 
       recognition.onerror = (event: SpeechRecognitionErrorEventLike) => {
         setIsListening(false);
         setInterimText('');
-        if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
-          setSpeechNotice(
-            'Microphone access was blocked. Allow microphone permission in your browser or type your symptoms directly below.'
-          );
-        } else if (event.error === 'no-speech') {
-          setSpeechNotice('No speech was detected. Click Record Symptoms to try again.');
-        } else if (event.error === 'audio-capture') {
-          setSpeechNotice(
-            'No microphone was detected on this device. You can type symptoms directly below.'
-          );
-        } else {
-          setSpeechNotice(
-            `Voice capture stopped (${event.error}). You can edit or finish typing your symptom note below.`
-          );
-        }
+        setSpeechNotice(formatSpeechErrorNotice(event.error));
       };
 
       recognition.onend = () => {
@@ -384,6 +332,8 @@ export function VoiceSymptomJournal({
               id="voice-symptom-transcript"
               rows={3}
               value={combinedText}
+              aria-invalid={Boolean(formError)}
+              aria-describedby={formError ? 'voice-symptom-error' : undefined}
               onChange={(e) => {
                 setTranscript(e.target.value);
                 setInterimText('');
@@ -395,7 +345,7 @@ export function VoiceSymptomJournal({
           </div>
 
           {formError && (
-            <p role="alert" className="text-xs font-medium text-red-700">
+            <p id="voice-symptom-error" role="alert" className="text-xs font-medium text-red-700">
               {formError}
             </p>
           )}
@@ -403,6 +353,8 @@ export function VoiceSymptomJournal({
           {/* Live Voice-to-Alert Triage Preview */}
           {liveAssessment && liveTone && (
             <div
+              role="status"
+              aria-live="polite"
               data-testid="live-symptom-alert"
               className={`p-3.5 rounded-lg border space-y-1.5 ${liveTone.surface}`}
             >
@@ -455,28 +407,13 @@ export function VoiceSymptomJournal({
             </p>
           </div>
 
-          <div
-            role="tablist"
-            aria-label="Filter health journal by alert severity"
-            className="inline-flex items-center p-1 bg-slate-100 rounded-lg"
-          >
-            {FILTER_OPTIONS.map((tab) => (
-              <button
-                key={tab.id}
-                type="button"
-                role="tab"
-                aria-selected={filter === tab.id}
-                onClick={() => setFilter(tab.id)}
-                className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors whitespace-nowrap shrink-0 ${
-                  filter === tab.id
-                    ? 'bg-white text-slate-900 shadow-xs'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </div>
+          <FilterGroup
+            label="Filter health journal by alert severity"
+            options={FILTER_OPTIONS}
+            value={filter}
+            onChange={setFilter}
+            compact
+          />
         </div>
 
         <div className="flex-1 max-h-[340px] overflow-y-auto divide-y divide-slate-200">
@@ -544,7 +481,7 @@ export function VoiceSymptomJournal({
                         type="button"
                         onClick={() => handleDeleteEntry(entry.id)}
                         aria-label={`Delete symptom entry "${entry.transcript.slice(0, 32)}"`}
-                        className="p-1.5 text-slate-400 hover:text-red-700 hover:bg-red-50 rounded-md transition-colors"
+                        className="p-1.5 text-slate-600 hover:text-red-700 hover:bg-red-50 rounded-md transition-colors"
                       >
                         <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
                       </button>

@@ -1,6 +1,8 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { Send, Sparkles, CheckCircle2, AlertCircle, RotateCcw } from 'lucide-react';
+import { FormattedMessage } from './FormattedMessage';
 import { VoiceSymptomJournal } from './VoiceSymptomJournal';
+import { mapPlanToRoutineItems } from '../utils/serverHelpers';
 import type {
   AiGeneratedPlan,
   AirQualityData,
@@ -17,67 +19,6 @@ interface AssistantViewProps {
   onPlanGenerated: (plan: AiGeneratedPlan) => void;
   onApplyPlanToRoutine: (items: RoutineItem[]) => void;
   autoGenerateSignal: number;
-}
-
-function FormattedMessage({ text, isUser }: { text: string; isUser: boolean }) {
-  if (isUser) {
-    return <span className="whitespace-pre-wrap">{text}</span>;
-  }
-
-  const lines = text.split('\n');
-  return (
-    <div className="space-y-1.5">
-      {lines.map((rawLine, lineIdx) => {
-        const line = rawLine.trim();
-        if (!line) return <div key={lineIdx} className="h-1" />;
-
-        const isBullet = line.startsWith('- ') || line.startsWith('* ');
-        const cleanLine = isBullet ? line.slice(2) : line.replace(/^#{1,3}\s+/, '');
-        const isHeading = /^#{1,3}\s+/.test(line);
-
-        const parts = cleanLine
-          .split(/(\*\*[^*]+\*\*|\*[^*]+\*)/g)
-          .map((segment, segIdx) => {
-            if (segment.startsWith('**') && segment.endsWith('**')) {
-              return (
-                <strong key={segIdx} className="font-semibold text-slate-900">
-                  {segment.slice(2, -2)}
-                </strong>
-              );
-            }
-            if (segment.startsWith('*') && segment.endsWith('*') && segment.length > 2) {
-              return (
-                <em key={segIdx} className="italic text-slate-700">
-                  {segment.slice(1, -1)}
-                </em>
-              );
-            }
-            return <span key={segIdx}>{segment}</span>;
-          });
-
-        if (isHeading) {
-          return (
-            <p key={lineIdx} className="font-semibold text-slate-900 pt-1">
-              {parts}
-            </p>
-          );
-        }
-
-        if (isBullet) {
-          return (
-            <div key={lineIdx} className="flex items-start gap-2 pl-1">
-              <span className="text-teal-700 mt-0.5 shrink-0" aria-hidden="true">
-                •
-              </span>
-              <span>{parts}</span>
-            </div>
-          );
-        }
-
-        return <p key={lineIdx}>{parts}</p>;
-      })}
-    </div>
-  );
 }
 
 export function AssistantView({
@@ -107,6 +48,20 @@ export function AssistantView({
 
   const lastSignalRef = useRef(autoGenerateSignal);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const messagesRef = useRef<ChatMessage[]>(messages);
+  const planAbortRef = useRef<AbortController | null>(null);
+  const chatAbortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+
+  useEffect(() => {
+    return () => {
+      planAbortRef.current?.abort();
+      chatAbortRef.current?.abort();
+    };
+  }, []);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -132,7 +87,11 @@ export function AssistantView({
     'Draft a friendly message for our apartment group proposing a winter no-idling and no-leaf-burning pledge.',
   ];
 
-  const handleGeneratePlan = async () => {
+  const handleGeneratePlan = useCallback(async () => {
+    planAbortRef.current?.abort();
+    const controller = new AbortController();
+    planAbortRef.current = controller;
+
     setPlanLoading(true);
     setPlanError(null);
     setPlanAppliedNotice(false);
@@ -140,6 +99,7 @@ export function AssistantView({
       const res = await fetch('/api/assistant/plan', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
         body: JSON.stringify({
           profile,
           airQuality,
@@ -150,74 +110,89 @@ export function AssistantView({
       if (!res.ok) {
         throw new Error(data.error || 'Could not generate a tailored action plan right now.');
       }
+      if (controller.signal.aborted) return;
       onPlanGenerated(data.plan as AiGeneratedPlan);
     } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') return;
       setPlanError(
         err instanceof Error ? err.message : 'Unable to generate tailored action plan.'
       );
     } finally {
-      setPlanLoading(false);
+      if (planAbortRef.current === controller) {
+        setPlanLoading(false);
+      }
     }
-  };
+  }, [profile, airQuality, focusNote, onPlanGenerated]);
 
   useEffect(() => {
     if (autoGenerateSignal > lastSignalRef.current) {
       lastSignalRef.current = autoGenerateSignal;
-      handleGeneratePlan();
+      void handleGeneratePlan();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoGenerateSignal]);
+  }, [autoGenerateSignal, handleGeneratePlan]);
 
-  const sendMessage = async (textToSend: string) => {
-    const trimmed = textToSend.trim();
-    if (!trimmed || sending) return;
+  const sendMessage = useCallback(
+    async (textToSend: string) => {
+      const trimmed = textToSend.trim();
+      if (!trimmed || sending) return;
 
-    const userMsg: ChatMessage = {
-      id: `user-${Date.now()}`,
-      role: 'user',
-      content: trimmed,
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-    };
+      chatAbortRef.current?.abort();
+      const controller = new AbortController();
+      chatAbortRef.current = controller;
 
-    const nextHistory = [...messages, userMsg];
-    setMessages(nextHistory);
-    setInput('');
-    setChatError(null);
-    setSending(true);
-
-    try {
-      const res = await fetch('/api/assistant/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          messages: nextHistory
-            .filter((m) => !m.error)
-            .map((m) => ({ role: m.role, content: m.content })),
-          profile,
-          airQuality,
-        }),
-      });
-
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Unable to get a response from the Clean-Air Assistant.');
-      }
-
-      const assistantMsg: ChatMessage = {
-        id: `ai-${Date.now()}`,
-        role: 'assistant',
-        content: data.reply,
+      const userMsg: ChatMessage = {
+        id: `user-${Date.now()}`,
+        role: 'user',
+        content: trimmed,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       };
-      setMessages((prev) => [...prev, assistantMsg]);
-    } catch (err) {
-      const message =
-        err instanceof Error ? err.message : 'Failed to connect to the assistant.';
-      setChatError(message);
-    } finally {
-      setSending(false);
-    }
-  };
+
+      const nextHistory = [...messagesRef.current, userMsg];
+      setMessages(nextHistory);
+      setInput('');
+      setChatError(null);
+      setSending(true);
+
+      try {
+        const res = await fetch('/api/assistant/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          signal: controller.signal,
+          body: JSON.stringify({
+            messages: nextHistory
+              .filter((m) => !m.error)
+              .map((m) => ({ role: m.role, content: m.content })),
+            profile,
+            airQuality,
+          }),
+        });
+
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data.error || 'Unable to get a response from the Clean-Air Assistant.');
+        }
+        if (controller.signal.aborted) return;
+
+        const assistantMsg: ChatMessage = {
+          id: `ai-${Date.now()}`,
+          role: 'assistant',
+          content: data.reply,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        };
+        setMessages((prev) => [...prev, assistantMsg]);
+      } catch (err) {
+        if (err instanceof DOMException && err.name === 'AbortError') return;
+        const message =
+          err instanceof Error ? err.message : 'Failed to connect to the assistant.';
+        setChatError(message);
+      } finally {
+        if (chatAbortRef.current === controller) {
+          setSending(false);
+        }
+      }
+    },
+    [sending, profile, airQuality]
+  );
 
   const handleSubmitChat = (e: React.FormEvent) => {
     e.preventDefault();
@@ -225,38 +200,12 @@ export function AssistantView({
       setChatError('Enter a question about winter smog, indoor air, or daily routines first.');
       return;
     }
-    sendMessage(input);
+    void sendMessage(input);
   };
 
   const handleApplyPlan = () => {
-    if (!generatedPlan) return;
-    const validPeriods = new Set(['morning', 'midday', 'evening', 'night']);
-    const validCategories = new Set([
-      'commute',
-      'ventilation',
-      'indoor_air',
-      'cooking',
-      'community',
-    ]);
-
-    const mapped: RoutineItem[] = generatedPlan.routines.map((r, idx) => ({
-      id: `ai-plan-${Date.now()}-${idx}`,
-      period: (validPeriods.has(r.period) ? r.period : 'morning') as RoutineItem['period'],
-      timeWindow: r.timeWindow,
-      title: r.title,
-      action: r.action,
-      category: (validCategories.has(r.category)
-        ? r.category
-        : 'indoor_air') as RoutineItem['category'],
-      directImpact: r.directImpact,
-      exposureReductionPct: Math.min(35, Math.max(5, Math.round(r.exposureReductionPct || 15))),
-      dailyPm25AvoidedUg: Math.round((r.exposureReductionPct || 15) * 6),
-      dailyCo2SavedKg: Math.max(0.1, Math.round((r.dailyCo2SavedKg || 0.8) * 10) / 10),
-      dailyEmissionPm25Grams: Math.round((r.dailyCo2SavedKg || 0.8) * 1.4 * 10) / 10,
-      isAiGenerated: true,
-    }));
-
-    onApplyPlanToRoutine(mapped);
+    if (!generatedPlan || generatedPlan.routines.length === 0) return;
+    onApplyPlanToRoutine(mapPlanToRoutineItems(generatedPlan));
     setPlanAppliedNotice(true);
   };
 
@@ -305,6 +254,8 @@ export function AssistantView({
             <button
               type="button"
               onClick={() => {
+                chatAbortRef.current?.abort();
+                setSending(false);
                 setMessages([
                   {
                     id: `reset-${Date.now()}`,
@@ -327,14 +278,14 @@ export function AssistantView({
 
           {/* Starter Prompts */}
           <div className="px-5 py-3 bg-slate-50/70 border-b border-slate-200">
-            <div className="text-xs text-slate-500 mb-2">Suggested family &amp; community questions:</div>
+            <div className="text-xs text-slate-600 mb-2">Suggested family &amp; community questions:</div>
             <div className="flex flex-col gap-1.5">
               {starterPrompts.map((prompt, idx) => (
                 <button
                   key={idx}
                   type="button"
                   disabled={sending}
-                  onClick={() => sendMessage(prompt)}
+                  onClick={() => void sendMessage(prompt)}
                   className="text-left text-xs text-slate-700 hover:text-teal-900 hover:bg-teal-50/60 px-2.5 py-1.5 rounded-md border border-slate-200/80 bg-white transition-colors disabled:opacity-60"
                 >
                   {prompt}
@@ -344,7 +295,12 @@ export function AssistantView({
           </div>
 
           {/* Messages */}
-          <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+          <div
+            role="log"
+            aria-live="polite"
+            aria-label="Conversation messages"
+            className="flex-1 overflow-y-auto px-5 py-4 space-y-4"
+          >
             {messages.map((msg) => (
               <div
                 key={msg.id}
@@ -352,7 +308,7 @@ export function AssistantView({
                   msg.role === 'user' ? 'items-end' : 'items-start'
                 }`}
               >
-                <div className="text-[11px] text-slate-400 mb-1">
+                <div className="text-[11px] text-slate-600 mb-1">
                   {msg.role === 'user' ? 'You' : 'Vayu'} · {msg.timestamp}
                 </div>
                 <div
@@ -369,8 +325,8 @@ export function AssistantView({
             ))}
 
             {sending && (
-              <div className="flex flex-col items-start">
-                <div className="text-[11px] text-slate-400 mb-1">Vayu · Thinking</div>
+              <div role="status" className="flex flex-col items-start">
+                <div className="text-[11px] text-slate-600 mb-1">Vayu · Thinking</div>
                 <div className="rounded-xl px-4 py-3 text-xs text-slate-600 bg-slate-50 border border-slate-200">
                   Analyzing {airQuality.city} inversion data and your household context...
                 </div>
@@ -379,6 +335,7 @@ export function AssistantView({
 
             {chatError && (
               <div
+                id="assistant-chat-error"
                 role="alert"
                 className="flex items-start gap-2.5 p-3.5 text-xs text-red-800 bg-red-50 border border-red-200 rounded-lg"
               >
@@ -401,6 +358,8 @@ export function AssistantView({
               id="assistant-chat-input"
               type="text"
               value={input}
+              aria-invalid={Boolean(chatError)}
+              aria-describedby={chatError ? 'assistant-chat-error' : undefined}
               onChange={(e) => {
                 setInput(e.target.value);
                 setChatError(null);
@@ -515,7 +474,7 @@ export function AssistantView({
                 </div>
 
                 {planAppliedNotice && (
-                  <p className="mb-2.5 text-xs font-medium text-teal-800">
+                  <p role="status" className="mb-2.5 text-xs font-medium text-teal-800">
                     Applied to Today&apos;s Air &amp; Routine schedule.
                   </p>
                 )}

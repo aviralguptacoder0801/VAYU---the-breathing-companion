@@ -56,22 +56,36 @@ export function AqiOverviewCard({ airQuality, ventilation }: AqiOverviewCardProp
 
           {/* Intuitive EPA Scale Bar */}
           <div className="mt-3">
-            <div
-              className="relative h-2 rounded-full overflow-hidden flex bg-slate-100"
-              aria-hidden="true"
+            <svg
+              viewBox="0 0 200 14"
+              role="meter"
+              aria-label={`US Air Quality Index ${airQuality.usAqi}, rated ${aqiInfo.label}`}
+              aria-valuemin={0}
+              aria-valuemax={350}
+              aria-valuenow={Math.min(350, Math.max(0, airQuality.usAqi))}
+              className="w-full h-3.5 overflow-visible"
             >
-              <div className="h-full bg-emerald-600" style={{ width: '14%' }} />
-              <div className="h-full bg-amber-500" style={{ width: '14%' }} />
-              <div className="h-full bg-orange-500" style={{ width: '15%' }} />
-              <div className="h-full bg-red-600" style={{ width: '14%' }} />
-              <div className="h-full bg-rose-800" style={{ width: '29%' }} />
-              <div className="h-full bg-purple-900" style={{ width: '14%' }} />
-              <span
-                className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-2.5 h-2.5 rounded-full bg-white border-2 border-slate-900 shadow-xs"
-                style={{ left: `${Math.min(97, Math.max(3, scalePct))}%` }}
+              <clipPath id="aqi-scale-clip">
+                <rect x="0" y="3" width="200" height="8" rx="4" />
+              </clipPath>
+              <g clipPath="url(#aqi-scale-clip)">
+                <rect x="0" y="3" width="28" height="8" fill="#059669" />
+                <rect x="28" y="3" width="28" height="8" fill="#f59e0b" />
+                <rect x="56" y="3" width="30" height="8" fill="#f97316" />
+                <rect x="86" y="3" width="28" height="8" fill="#dc2626" />
+                <rect x="114" y="3" width="58" height="8" fill="#9f1239" />
+                <rect x="172" y="3" width="28" height="8" fill="#581c87" />
+              </g>
+              <circle
+                cx={Math.min(194, Math.max(6, (scalePct / 100) * 200))}
+                cy="7"
+                r="5"
+                fill="#ffffff"
+                stroke="#0f172a"
+                strokeWidth="2"
               />
-            </div>
-            <div className="mt-1 flex items-center justify-between text-[10px] font-mono text-slate-400">
+            </svg>
+            <div className="mt-1 flex items-center justify-between text-[11px] font-mono text-slate-600">
               <span>0 Good</span>
               <span>150</span>
               <span>300+ Severe</span>

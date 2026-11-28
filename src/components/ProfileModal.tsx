@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { X } from 'lucide-react';
 import { CITY_PRESETS } from '../data/presets';
 import { validateProfile } from '../utils/airQuality';
@@ -27,14 +27,53 @@ const SENSITIVITY_OPTIONS: Array<{ id: SensitivityGroup; label: string }> = [
 
 export function ProfileModal({ open, profile, onClose, onSave }: ProfileModalProps) {
   const [draft, setDraft] = useState<HouseholdProfile>(profile);
+  const [sizeInput, setSizeInput] = useState<string>(String(profile.householdSize));
   const [error, setError] = useState<string | null>(null);
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  const cityInputRef = useRef<HTMLInputElement | null>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
-    if (open) {
-      setDraft(profile);
-      setError(null);
-    }
-  }, [open, profile]);
+    if (!open) return;
+    previousFocusRef.current = document.activeElement as HTMLElement | null;
+    setDraft(profile);
+    setSizeInput(String(profile.householdSize));
+    setError(null);
+
+    const frame = window.requestAnimationFrame(() => {
+      cityInputRef.current?.focus();
+    });
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        onClose();
+        return;
+      }
+      if (event.key === 'Tab' && dialogRef.current) {
+        const focusables = dialogRef.current.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        );
+        if (focusables.length === 0) return;
+        const first = focusables[0];
+        const last = focusables[focusables.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener('keydown', handleKeyDown);
+      previousFocusRef.current?.focus();
+    };
+  }, [open, profile, onClose]);
 
   if (!open) return null;
 
@@ -62,15 +101,21 @@ export function ProfileModal({ open, profile, onClose, onSave }: ProfileModalPro
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const validationError = validateProfile(draft);
+    const parsedSize = sizeInput.trim() === '' ? Number.NaN : Number(sizeInput);
+    const candidate: HouseholdProfile = {
+      ...draft,
+      householdSize: parsedSize,
+    };
+    const validationError = validateProfile(candidate);
     if (validationError) {
       setError(validationError);
       return;
     }
     onSave({
-      ...draft,
-      city: draft.city.trim(),
-      country: draft.country.trim(),
+      ...candidate,
+      city: candidate.city.trim(),
+      country: candidate.country.trim(),
+      householdSize: Math.round(parsedSize),
     });
     onClose();
   };
@@ -81,8 +126,14 @@ export function ProfileModal({ open, profile, onClose, onSave }: ProfileModalPro
       role="dialog"
       aria-modal="true"
       aria-labelledby="profile-modal-title"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
     >
-      <div className="w-full max-w-xl bg-white border border-slate-200 rounded-xl shadow-lg max-h-[90vh] flex flex-col">
+      <div
+        ref={dialogRef}
+        className="w-full max-w-xl bg-white border border-slate-200 rounded-xl shadow-lg max-h-[90vh] flex flex-col"
+      >
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
           <div>
             <h2 id="profile-modal-title" className="text-lg font-semibold text-slate-900">
@@ -105,6 +156,7 @@ export function ProfileModal({ open, profile, onClose, onSave }: ProfileModalPro
         <form onSubmit={handleSubmit} className="overflow-y-auto px-6 py-5 space-y-5">
           {error && (
             <div
+              id="profile-form-error"
               role="alert"
               className="p-3 text-xs font-medium text-red-800 bg-red-50 border border-red-200 rounded-lg"
             >
@@ -117,9 +169,12 @@ export function ProfileModal({ open, profile, onClose, onSave }: ProfileModalPro
               City or urban area
             </label>
             <input
+              ref={cityInputRef}
               id="profile-city"
               type="text"
               value={draft.city}
+              aria-invalid={Boolean(error && error.toLowerCase().includes('city'))}
+              aria-describedby={error ? 'profile-form-error' : undefined}
               onChange={(e) => {
                 setDraft((prev) => ({ ...prev, city: e.target.value, country: '' }));
                 setError(null);
@@ -132,11 +187,12 @@ export function ProfileModal({ open, profile, onClose, onSave }: ProfileModalPro
                 <button
                   key={preset.city}
                   type="button"
+                  aria-pressed={draft.city.toLowerCase() === preset.city.toLowerCase()}
                   onClick={() => handleSelectPresetCity(preset.city)}
                   className={`px-2.5 py-1 text-xs rounded-md border transition-colors whitespace-nowrap shrink-0 ${
                     draft.city.toLowerCase() === preset.city.toLowerCase()
                       ? 'bg-teal-50 border-teal-700 text-teal-900 font-medium'
-                      : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                      : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100 hover:text-slate-900'
                   }`}
                 >
                   {preset.city}
@@ -155,10 +211,13 @@ export function ProfileModal({ open, profile, onClose, onSave }: ProfileModalPro
                 type="number"
                 min={1}
                 max={20}
-                value={draft.householdSize}
-                onChange={(e) =>
-                  setDraft((prev) => ({ ...prev, householdSize: Number(e.target.value) }))
-                }
+                value={sizeInput}
+                aria-invalid={Boolean(error && error.toLowerCase().includes('household'))}
+                aria-describedby={error ? 'profile-form-error' : undefined}
+                onChange={(e) => {
+                  setSizeInput(e.target.value);
+                  setError(null);
+                }}
                 className="w-full px-3.5 py-2 text-sm font-mono tabular-nums text-slate-900 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-700/20 focus:border-teal-700"
               />
             </div>

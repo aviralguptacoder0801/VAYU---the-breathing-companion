@@ -54,18 +54,33 @@ export function HourlySmogChart({ hourly, ventilation }: HourlySmogChartProps) {
   const yTicks = [0, Math.round(maxPm25 * 0.35), Math.round(maxPm25 * 0.7), Math.round(maxPm25)];
   const activePoint = hoveredIdx !== null ? hourly[hoveredIdx] : null;
 
+  const handleKeyDown = (e: React.KeyboardEvent<SVGSVGElement>) => {
+    if (e.key === 'ArrowRight') {
+      e.preventDefault();
+      setHoveredIdx((prev) => (prev === null ? 0 : Math.min(hourly.length - 1, prev + 1)));
+    } else if (e.key === 'ArrowLeft') {
+      e.preventDefault();
+      setHoveredIdx((prev) => (prev === null ? hourly.length - 1 : Math.max(0, prev - 1)));
+    } else if (e.key === 'Escape') {
+      setHoveredIdx(null);
+    }
+  };
+
   return (
     <div>
       <div className="flex flex-wrap items-baseline justify-between gap-2 mb-3">
         <div>
-          <h3 className="text-sm font-semibold text-slate-900">
+          <h2 className="text-sm font-semibold text-slate-900">
             24-Hour Winter Inversion &amp; PM2.5 Curve
-          </h3>
-          <p className="text-xs text-slate-500 mt-0.5">
-            Shaded band highlights the lowest-smog afternoon mixing window ({ventilation.bestStartHour}–{ventilation.bestEndHour}).
+          </h2>
+          <p className="text-xs text-slate-600 mt-0.5">
+            Shaded band highlights the lowest-smog afternoon mixing window ({ventilation.bestStartHour}–{ventilation.bestEndHour}). Focus chart and use arrow keys or hover to inspect hourly readings.
           </p>
         </div>
-        <div className="font-mono tabular-nums text-xs text-slate-600">
+        <div
+          aria-live="polite"
+          className="font-mono tabular-nums text-xs text-slate-600"
+        >
           {activePoint ? (
             <span>
               {activePoint.hourLabel} · PM2.5 <strong className="text-slate-900">{activePoint.pm25} µg/m³</strong> · AQI {activePoint.usAqi}
@@ -82,9 +97,12 @@ export function HourlySmogChart({ hourly, ventilation }: HourlySmogChartProps) {
         <svg
           viewBox={`0 0 ${width} ${height}`}
           role="img"
-          aria-label={`24-hour PM2.5 concentration curve showing lowest smog between ${ventilation.bestStartHour} and ${ventilation.bestEndHour}`}
-          className="w-full h-auto min-w-[460px] select-none"
+          tabIndex={0}
+          aria-label={`24-hour PM2.5 concentration curve showing lowest smog between ${ventilation.bestStartHour} and ${ventilation.bestEndHour}. Use Left and Right arrow keys to inspect hours.`}
+          className="w-full h-auto min-w-[460px] select-none rounded-md"
           onMouseLeave={() => setHoveredIdx(null)}
+          onBlur={() => setHoveredIdx(null)}
+          onKeyDown={handleKeyDown}
         >
           <defs>
             <linearGradient id="pm25Fill" x1="0" y1="0" x2="0" y2="1">
@@ -110,7 +128,7 @@ export function HourlySmogChart({ hourly, ventilation }: HourlySmogChartProps) {
                   x={padLeft - 8}
                   y={y + 3.5}
                   textAnchor="end"
-                  className="fill-slate-400 font-mono text-[10px]"
+                  className="fill-slate-600 font-mono text-[10px]"
                 >
                   {tick}
                 </text>

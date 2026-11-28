@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import { Wind, ShieldCheck, Repeat, MessageSquare, SlidersHorizontal, X } from 'lucide-react';
 import type { HouseholdProfile, ImpactSummary } from '../types';
 
@@ -63,6 +64,20 @@ export function Sidebar({
   mobileOpen,
   onCloseMobile,
 }: SidebarProps) {
+  const closeButtonRef = useRef<HTMLButtonElement | null>(null);
+
+  useEffect(() => {
+    if (!mobileOpen) return;
+    closeButtonRef.current?.focus();
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        onCloseMobile();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [mobileOpen, onCloseMobile]);
+
   const handleNav = (tab: WorkspaceTab) => {
     onSelectTab(tab);
     onCloseMobile();
@@ -82,10 +97,11 @@ export function Sidebar({
           Vayu
         </a>
         <button
+          ref={closeButtonRef}
           type="button"
           onClick={onCloseMobile}
           aria-label="Close navigation menu"
-          className="lg:hidden p-2 -mr-2 text-slate-500 hover:text-slate-900 rounded-md"
+          className="lg:hidden p-2 -mr-2 text-slate-600 hover:text-slate-900 rounded-md"
         >
           <X className="w-5 h-5" aria-hidden="true" />
         </button>
@@ -184,7 +200,13 @@ export function Sidebar({
       <aside className="hidden lg:block w-64 shrink-0 h-screen sticky top-0">{navContent}</aside>
 
       {mobileOpen && (
-        <div className="lg:hidden fixed inset-0 z-50 flex">
+        <div
+          id="mobile-nav-drawer"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Navigation menu"
+          className="lg:hidden fixed inset-0 z-50 flex"
+        >
           <div
             className="fixed inset-0 bg-slate-900/35"
             aria-hidden="true"

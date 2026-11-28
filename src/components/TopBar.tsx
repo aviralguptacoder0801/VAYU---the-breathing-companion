@@ -4,6 +4,7 @@ import type { WorkspaceTab } from './Sidebar';
 interface TopBarProps {
   activeTab: WorkspaceTab;
   city: string;
+  mobileMenuOpen: boolean;
   onOpenMobileMenu: () => void;
   onOpenProfile: () => void;
   onTriggerAiPlan: () => void;
@@ -26,6 +27,7 @@ const MOBILE_TAB_TITLES: Record<WorkspaceTab, string> = {
 export function TopBar({
   activeTab,
   city,
+  mobileMenuOpen,
   onOpenMobileMenu,
   onOpenProfile,
   onTriggerAiPlan,
@@ -37,6 +39,8 @@ export function TopBar({
           type="button"
           onClick={onOpenMobileMenu}
           aria-label="Open navigation menu"
+          aria-expanded={mobileMenuOpen}
+          aria-controls="mobile-nav-drawer"
           className="lg:hidden p-2 -ml-2 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-md shrink-0"
         >
           <Menu className="w-5 h-5" aria-hidden="true" />

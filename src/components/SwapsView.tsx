@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { ArrowRight, Check, Users } from 'lucide-react';
 import { SUSTAINABLE_SWAPS } from '../data/presets';
 import { getPrioritizedSwaps } from '../utils/airQuality';
+import { FilterGroup } from './FilterGroup';
 import type { HouseholdProfile, ImpactSummary, SwapCategory } from '../types';
 
 interface SwapsViewProps {
@@ -106,11 +107,12 @@ export function SwapsView({
               Scale your adopted low-emission routines and swaps to see the direct monthly emissions prevented across your building, block, or school community.
             </p>
 
-            <div className="mt-4 flex flex-wrap gap-2">
+            <div role="group" aria-label="Community scale presets" className="mt-4 flex flex-wrap gap-2">
               {SCALE_PRESETS.map((preset) => (
                 <button
                   key={preset.count}
                   type="button"
+                  aria-pressed={communityHouseholds === preset.count}
                   onClick={() => onChangeCommunityHouseholds(preset.count)}
                   className={`px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors whitespace-nowrap shrink-0 ${
                     communityHouseholds === preset.count
@@ -183,32 +185,21 @@ export function SwapsView({
       </div>
 
       {/* Category Filter + Swap Cards */}
-      <div className="space-y-4">
+      <section aria-labelledby="swaps-list-heading" className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div
-            role="tablist"
-            aria-label="Filter sustainable swaps by category"
-            className="inline-flex flex-wrap items-center p-1 bg-slate-100 rounded-lg"
-          >
-            {SWAP_FILTERS.map((tab) => (
-              <button
-                key={tab.id}
-                type="button"
-                role="tab"
-                aria-selected={filter === tab.id}
-                onClick={() => setFilter(tab.id)}
-                className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap shrink-0 ${
-                  filter === tab.id
-                    ? 'bg-white text-slate-900 shadow-xs'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                {tab.label}
-              </button>
-            ))}
+          <div className="flex flex-wrap items-center gap-3">
+            <h2 id="swaps-list-heading" className="text-base font-semibold text-slate-900">
+              Tailored Low-Emission Swaps
+            </h2>
+            <FilterGroup
+              label="Filter sustainable swaps by category"
+              options={SWAP_FILTERS}
+              value={filter}
+              onChange={setFilter}
+            />
           </div>
 
-          <span className="text-xs text-slate-500">
+          <span className="text-xs text-slate-600">
             Matches for your household profile appear first
           </span>
         </div>
@@ -318,7 +309,7 @@ export function SwapsView({
             );
           })}
         </div>
-      </div>
+      </section>
     </div>
   );
 }
